@@ -1,0 +1,90 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <sys/mman.h>
+ 
+#define HEAP_SIZE (1024 * 1024)  // Размер кучи
+
+void *heap_start; // указатель на начало
+ 
+void *my_malloc(size_t size) {
+    uintptr_t ptr = (uintptr_t)heap_start; // перемещаем указатель на начало
+ 
+    while (ptr < (uintptr_t)heap_start + HEAP_SIZE) {
+        size_t *block_size = (size_t *)ptr; // Указатель на размер текущего блока
+ 
+        // Проверяем, что текущий блок свободен и достаточно большой
+        if (*block_size == 0 && (uintptr_t)heap_start + HEAP_SIZE - ptr >= size + sizeof(size_t)) {
+            size_t continuous_free_blocks = 0; // количество подряд идущих свободных блоков
+            uintptr_t tmp_ptr = ptr;
+ 
+            // Ищем непрерывные свободные блоки памяти пока не кончится регион
+            while (continuous_free_blocks < size && tmp_ptr < (uintptr_t)heap_start + HEAP_SIZE) {
+                size_t *tmp_block_size = (size_t *)tmp_ptr;
+ 
+                if (*tmp_block_size == 0) { // блок свободен
+                    continuous_free_blocks++;
+                } else {
+                    tmp_ptr += continuous_free_blocks; // смещаем указатель на то место, где свободные блоки закончились
+                    continuous_free_blocks = 0; // обнуляем, чтобы заново считать
+                    ptr = tmp_ptr;
+                }
+                tmp_ptr++; // двигаемся впреред 
+            }
+ 
+            // Если найдено достаточное количество непрерывных свободных блоков
+            if (continuous_free_blocks >= size) {
+                *block_size = size; // записали размер выделенного блока
+                return (void *)(ptr + sizeof(size_t)); // передали нужный указатель
+            }
+        }
+ 
+        // Если блок занят или недостаточно большой, переходим к следующему блоку
+        ptr += *block_size + sizeof(size_t);
+    }
+ 
+    // Если достаточного свободного места не найдено, возвращаем NULL
+    return NULL;
+}
+ 
+ 
+void my_free(void *ptr) {
+    size_t *block_size = (size_t *)((uintptr_t)ptr - sizeof(size_t)); // переносим указатель на наш блок
+    for(int i = 0; i < *block_size; i++){ // помечаем свободным, зануляя его размер
+        *(block_size + i) = 0;
+    }
+}
+ 
+int main() {
+    // Создаем анонимный регион памяти для кучи
+    heap_start = mmap(NULL, HEAP_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+ 
+    if (heap_start == MAP_FAILED) {
+        perror("mmap");
+        return 1;
+    }
+ 
+    // Тестирование my_malloc() и my_free()
+    void *ptr1 = my_malloc(100);
+    printf("ptr1: %p\n", ptr1);
+ 
+    void *ptr2 = my_malloc(100);
+    printf("ptr2: %p\n", ptr2);
+ 
+    void *ptr3 = my_malloc(100);
+    printf("ptr3: %p\n", ptr3);
+ 
+    void *ptr4 = my_malloc(100);
+    printf("ptr4: %p\n", ptr4);
+ 
+    my_free(ptr2);
+    my_free(ptr3);
+
+    void *ptr5 = my_malloc(250); // встал после ptr4
+    printf("ptr5: %p\n", ptr5);
+
+    my_free(ptr1);
+    my_free(ptr4);
+    my_free(ptr5);
+ 
+    return 0;
+}
