@@ -102,6 +102,7 @@ int main(int argc, char const *argv[]) {
 
             if (FD_ISSET(client_socket, &read_fds)) {
                 // читаем данные от клиента
+                memset(buffer, 0, sizeof(buffer));
                 if ((valread = read(client_socket, buffer, 1024)) == 0) {
                     // клиент отключился, удаляем его сокет из массива
                     close(client_socket);
