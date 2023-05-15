@@ -35,11 +35,17 @@ int main(int argc, char const *argv[]) {
 
     std::cout << "Enter message: ";
     std::cin.getline(buffer, 1024); // считываем сообщение
-    send(sock, buffer, strlen(buffer), 0); // отправляем его
-    std::cout << "Message sent" << std::endl;
 
-    memset(buffer, 0, sizeof(buffer));
-    int valread = read(sock, buffer, 1024); // принимаем мообщение в буфер
-    std::cout << "Received message: " << buffer << std::endl;
+    while (true){
+
+        send(sock, buffer, strlen(buffer), 0); // отправляем его
+        std::cout << "Message sent" << std::endl;
+
+        memset(buffer, 0, sizeof(buffer));
+        int valread = read(sock, buffer, 1024); // принимаем мообщение в буфер
+        std::cout << "Received message: " << buffer << std::endl;
+        sleep(2);
+    }
+
     return 0;
 }
