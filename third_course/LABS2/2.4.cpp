@@ -1,3 +1,7 @@
+/*
+в примере показывается использование spin_lock, но можно тоже самое сделать для mutex_lock
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -11,28 +15,6 @@
 
 #define SPINLOCK_FREE 0
 #define SPINLOCK_LOCKED 1
-
-
-typedef struct _QueueNode {
-    int val;
-    struct _QueueNode *next;
-} qnode_t;
-
-typedef struct _Queue {
-    qnode_t *first;
-    qnode_t *last;
-
-    int count;
-    int max_count;
-
-    long add_attempts;
-    long get_attempts;
-    long add_count;
-    long get_count;
-
-    volatile uint32_t lock;
-
-} queue_t;
 
 void spin_lock(volatile uint32_t *lock) {
     while (__sync_lock_test_and_set(lock, SPINLOCK_LOCKED)) {
@@ -56,6 +38,29 @@ void mutex_unlock(volatile uint32_t *lock) {
     *lock = 0;
     syscall(SYS_futex, lock, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
 }
+
+///ПРИМЕР
+
+typedef struct _QueueNode {
+    int val;
+    struct _QueueNode *next;
+} qnode_t;
+
+typedef struct _Queue {
+    qnode_t *first;
+    qnode_t *last;
+
+    int count;
+    int max_count;
+
+    long add_attempts;
+    long get_attempts;
+    long add_count;
+    long get_count;
+
+    volatile uint32_t lock;
+
+} queue_t;
 
 queue_t* queue_init(int max_count) {
     queue_t *q = (queue_t*)malloc(sizeof(queue_t));
