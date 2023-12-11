@@ -8,10 +8,12 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <regex>
+#include <csignal>
 
 #define MAX_BUFFER_SIZE 4096
-#define PORT 8080
-
+#define PORT 8085
+int serverSocket;
+bool running = true;
 
 std::unordered_map<std::string, std::string> cache;
 
@@ -50,6 +52,15 @@ std::string extractDomainFromUrl(const std::string& url) {
     return url;
 }
 
+void signalHandler(int signal) {
+    if (signal == SIGINT || signal == SIGTERM) {
+        std::cout << "Received signal " << signal << ". Closing the server socket." << std::endl;
+        running = false;
+        close(serverSocket);
+        exit(signal);
+    }
+}
+
 void* handleClientRequest(void* args) {
     int clientSocket = *((int*)args);
     char buffer[MAX_BUFFER_SIZE];
@@ -81,7 +92,21 @@ void* handleClientRequest(void* args) {
     }
 
     int targetSocket = socket(AF_INET, SOCK_STREAM, 0);
-    connect(targetSocket, result->ai_addr, result->ai_addrlen);
+    if (targetSocket == -1) {
+        std::cerr << "Failed to create target socket." << std::endl;
+        close(clientSocket);
+        freeaddrinfo(result);
+        return nullptr;
+    }
+
+    if (connect(targetSocket, result->ai_addr, result->ai_addrlen) == -1) {
+        std::cerr << "Failed to connect to the target." << std::endl;
+        close(targetSocket);
+        close(clientSocket);
+        freeaddrinfo(result);
+        return nullptr;
+    }
+
     freeaddrinfo(result);
 
     write(targetSocket, request.c_str(), request.length());
@@ -104,7 +129,10 @@ void* handleClientRequest(void* args) {
 }
 
 int main() {
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == -1) {
         std::cerr << "Failed to create server socket." << std::endl;
         return 1;
@@ -128,7 +156,10 @@ int main() {
 
     std::cout << "Now serving at :" << PORT << std::endl;
 
-    while (true) {
+    // Добавляем обработчик сигналов
+    signal(SIGINT, signalHandler);
+
+    while (running) {
         struct sockaddr_in clientAddr{};
         socklen_t clientAddrLen = sizeof(clientAddr);
         int* clientSocket = new int(accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen));
@@ -143,7 +174,6 @@ int main() {
     }
 
     close(serverSocket);
+
     return 0;
 }
-
-//curl --proxy "http://localhost:8080" -v --insecure http://example.com/
