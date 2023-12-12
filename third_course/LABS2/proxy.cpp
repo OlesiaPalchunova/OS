@@ -10,7 +10,7 @@
 #include <regex>
 #include <csignal>
 
-#define MAX_BUFFER_SIZE 4096
+#define MAX_BUFFER_SIZE 1024
 #define PORT 8085
 int serverSocket;
 bool running = true;
@@ -61,29 +61,16 @@ void signalHandler(int signal) {
     }
 }
 
-void writeToSocketFromCache(int clientSocket, const std::string& data) {
-    size_t pos = 0;
-    const size_t chunkSize = MAX_BUFFER_SIZE;
-    ssize_t bytesWritten;
-
-    while (pos < data.length()) {
-        size_t remainingData = data.length() - pos;
-        size_t currentChunkSize = remainingData > chunkSize ? chunkSize : remainingData;
-
-        bytesWritten = write(clientSocket, data.substr(pos, currentChunkSize).c_str(), currentChunkSize);
-        if (bytesWritten <= 0) {
-            std::cerr << "Failed to write to socket." << std::endl;
-            break;
-        }
-
-        pos += bytesWritten;
-    }
-
-    close(clientSocket);
+bool isDataInCache(const std::string& url) {
+    return cache.find(url + "_1") != cache.end();
 }
 
-bool isDataInCache(const std::string& url) {
-    return cache.find(url) != cache.end();
+void saveDataToCache(const std::string& url, const std::string& data, int partNumber) {
+    cache[url + "_" + std::to_string(partNumber)] = data;
+}
+
+std::string getDataFromCache(const std::string& url, int partNumber) {
+    return cache[url + "_" + std::to_string(partNumber)];
 }
 
 void* handleClientRequest(void* args) {
@@ -98,8 +85,17 @@ void* handleClientRequest(void* args) {
     std::cout << isDataInCache(targetUrl) << std::endl;
     if (isDataInCache(targetUrl)) {
         std::cout << "Data found in cache." << std::endl;
-        std::string cachedData = getDataFromCache(targetUrl);
-        writeToSocketFromCache(clientSocket, cachedData);
+
+        // Отправка всех порций данных из кеша по порядку
+        for (int partNumber = 1;; ++partNumber) {
+            std::string key = targetUrl + "_" + std::to_string(partNumber);
+            if (cache.find(key) == cache.end()) {
+                // Если достигнут конец порций данных, завершаем отправку
+                break;
+            }
+            write(clientSocket, cache[key].c_str(), cache[key].length());
+        }
+        close(clientSocket);
         return nullptr;
     }
 
@@ -137,16 +133,18 @@ void* handleClientRequest(void* args) {
 
     write(targetSocket, request.c_str(), request.length());
 
-    memset(buffer, 0, sizeof(buffer));
     std::string receivedData;
+    int partNumber = 1;
     while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
         receivedData.append(buffer, bytesRead);
+        //Добавляем части сообщения в кеш, меняя домен на одно значение в конце
+        saveDataToCache(targetUrl, buffer, partNumber);
         write(clientSocket, buffer, bytesRead);
         memset(buffer, 0, sizeof(buffer));
-    }
 
-    if (!receivedData.empty()) {
-        saveDataToCache(targetUrl, receivedData);
+        if (receivedData.size() >= MAX_BUFFER_SIZE) {
+            ++partNumber;
+        }
     }
 
     close(targetSocket);
