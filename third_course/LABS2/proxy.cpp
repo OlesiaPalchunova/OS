@@ -61,6 +61,31 @@ void signalHandler(int signal) {
     }
 }
 
+void writeToSocketFromCache(int clientSocket, const std::string& data) {
+    size_t pos = 0;
+    const size_t chunkSize = MAX_BUFFER_SIZE;
+    ssize_t bytesWritten;
+
+    while (pos < data.length()) {
+        size_t remainingData = data.length() - pos;
+        size_t currentChunkSize = remainingData > chunkSize ? chunkSize : remainingData;
+
+        bytesWritten = write(clientSocket, data.substr(pos, currentChunkSize).c_str(), currentChunkSize);
+        if (bytesWritten <= 0) {
+            std::cerr << "Failed to write to socket." << std::endl;
+            break;
+        }
+
+        pos += bytesWritten;
+    }
+
+    close(clientSocket);
+}
+
+bool isDataInCache(const std::string& url) {
+    return cache.find(url) != cache.end();
+}
+
 void* handleClientRequest(void* args) {
     int clientSocket = *((int*)args);
     char buffer[MAX_BUFFER_SIZE];
@@ -70,10 +95,11 @@ void* handleClientRequest(void* args) {
     std::string request(buffer, bytesRead);
     std::string targetUrl = extractTargetUrl(request);
 
-    std::string cachedData = getDataFromCache(targetUrl);
-    if (!cachedData.empty()) {
-        write(clientSocket, cachedData.c_str(), cachedData.length());
-        close(clientSocket);
+    std::cout << isDataInCache(targetUrl) << std::endl;
+    if (isDataInCache(targetUrl)) {
+        std::cout << "Data found in cache." << std::endl;
+        std::string cachedData = getDataFromCache(targetUrl);
+        writeToSocketFromCache(clientSocket, cachedData);
         return nullptr;
     }
 
