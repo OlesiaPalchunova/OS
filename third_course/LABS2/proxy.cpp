@@ -83,18 +83,26 @@ void* handleClientRequest(void* args) {
     std::string targetUrl = extractTargetUrl(request);
 
     std::cout << isDataInCache(targetUrl) << std::endl;
+    int count1 = 0;
     if (isDataInCache(targetUrl)) {
         std::cout << "Data found in cache." << std::endl;
 
-        // Отправка всех порций данных из кеша по порядку
+
         for (int partNumber = 1;; ++partNumber) {
             std::string key = targetUrl + "_" + std::to_string(partNumber);
             if (cache.find(key) == cache.end()) {
-                // Если достигнут конец порций данных, завершаем отправку
+                // std::cout << partNumber << std::endl;
                 break;
             }
-            write(clientSocket, cache[key].c_str(), cache[key].length());
+            
+            ssize_t bytesWritten = write(clientSocket, cache[key].c_str(), cache[key].length());
+            if (bytesWritten == -1) {
+                std::cerr << "Error writing to socket." << std::endl;
+                break;
+            }
+            count1 += cache[key].size();
         }
+        std::cout << "count: " << count1 << std::endl;
         close(clientSocket);
         return nullptr;
     }
@@ -133,19 +141,67 @@ void* handleClientRequest(void* args) {
 
     write(targetSocket, request.c_str(), request.length());
 
+    int count = 0;
     std::string receivedData;
     int partNumber = 1;
     while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
         receivedData.append(buffer, bytesRead);
-        //Добавляем части сообщения в кеш, меняя домен на одно значение в конце
-        saveDataToCache(targetUrl, buffer, partNumber);
         write(clientSocket, buffer, bytesRead);
-        memset(buffer, 0, sizeof(buffer));
+        count += receivedData.size();
 
-        if (receivedData.size() >= MAX_BUFFER_SIZE) {
+
+        size_t pos = 0;
+        while (pos < receivedData.size()) {
+            size_t chunkSize;
+            if (MAX_BUFFER_SIZE < receivedData.size() - pos) chunkSize = MAX_BUFFER_SIZE;
+            else chunkSize = receivedData.size() - pos;
+            std::string chunk = receivedData.substr(pos, chunkSize);
+            
+            saveDataToCache(targetUrl, chunk, partNumber);
+            
+            pos += chunkSize;
             ++partNumber;
         }
+        receivedData.clear();
+        memset(buffer, 0, sizeof(buffer));
     }
+    count += receivedData.size();
+    if (!receivedData.empty()) {
+        saveDataToCache(targetUrl, receivedData, partNumber);
+    }
+
+    close(targetSocket);
+    close(clientSocket);
+    while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
+        receivedData.append(buffer, bytesRead);
+        count += receivedData.size();
+
+        if (receivedData.size() >= MAX_BUFFER_SIZE) {
+            size_t dataSizeForCurrentPart = MAX_BUFFER_SIZE;
+            if (receivedData.size() > MAX_BUFFER_SIZE) {
+                dataSizeForCurrentPart = receivedData.size() - MAX_BUFFER_SIZE;
+            }
+
+            saveDataToCache(targetUrl, receivedData.substr(0, MAX_BUFFER_SIZE), partNumber);
+
+            write(clientSocket, receivedData.substr(0, MAX_BUFFER_SIZE).c_str(), MAX_BUFFER_SIZE);
+            
+            receivedData = receivedData.substr(MAX_BUFFER_SIZE);
+
+            ++partNumber;
+        }
+        
+        memset(buffer, 0, sizeof(buffer));
+    }
+
+    if (!receivedData.empty()) {
+        saveDataToCache(targetUrl, receivedData, partNumber);
+        write(clientSocket, receivedData.c_str(), receivedData.length());
+    }
+
+    close(targetSocket);
+    close(clientSocket);
+    std::cout << count << std::endl;
 
     close(targetSocket);
     close(clientSocket);
