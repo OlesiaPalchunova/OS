@@ -9,8 +9,14 @@
 #include <pthread.h>
 #include <regex>
 #include <csignal>
+#include <mutex>
+#include <condition_variable>
 
-#define MAX_BUFFER_SIZE 1024
+std::mutex cacheMutex;
+std::condition_variable cacheReady;
+bool dataReady = false;
+
+#define MAX_BUFFER_SIZE 4096
 #define PORT 8085
 int serverSocket;
 bool running = true;
@@ -82,27 +88,42 @@ void* handleClientRequest(void* args) {
     std::string request(buffer, bytesRead);
     std::string targetUrl = extractTargetUrl(request);
 
-    std::cout << isDataInCache(targetUrl) << std::endl;
     int count1 = 0;
-    if (isDataInCache(targetUrl)) {
-        std::cout << "Data found in cache." << std::endl;
+    int count2 = 0;
 
+    bool allowCacheRead = false;
+
+    // Проверяем флаг для разрешения чтения из кэша
+    {
+        std::unique_lock<std::mutex> lock(cacheMutex);
+        if (dataReady) {
+            allowCacheRead = true;
+        } else {
+            dataReady = true;
+        }
+    }
+
+    // Если разрешено читать из кэша, то читаем
+    if (allowCacheRead && isDataInCache(targetUrl)) {
+        std::cout << "Data found in cache." << std::endl;
 
         for (int partNumber = 1;; ++partNumber) {
             std::string key = targetUrl + "_" + std::to_string(partNumber);
             if (cache.find(key) == cache.end()) {
-                // std::cout << partNumber << std::endl;
+                std::cout << partNumber << std::endl;
                 break;
             }
-            
+
             ssize_t bytesWritten = write(clientSocket, cache[key].c_str(), cache[key].length());
             if (bytesWritten == -1) {
                 std::cerr << "Error writing to socket." << std::endl;
                 break;
             }
-            count1 += cache[key].size();
+            count1 += bytesWritten;
+            count2 += cache[key].size();
         }
-        std::cout << "count: " << count1 << std::endl;
+
+        std::cout << "count: " << count1 << " " << count2 << std::endl;
         close(clientSocket);
         return nullptr;
     }
@@ -144,69 +165,47 @@ void* handleClientRequest(void* args) {
     int count = 0;
     std::string receivedData;
     int partNumber = 1;
-    while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
-        receivedData.append(buffer, bytesRead);
-        write(clientSocket, buffer, bytesRead);
-        count += receivedData.size();
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        std::cout << "...................................................." << std::endl;
+        std::cout << isDataInCache(targetUrl) << std::endl;
 
+        while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
+            receivedData.append(buffer, bytesRead);
+            write(clientSocket, buffer, bytesRead);
+            count += receivedData.size();
 
-        size_t pos = 0;
-        while (pos < receivedData.size()) {
-            size_t chunkSize;
-            if (MAX_BUFFER_SIZE < receivedData.size() - pos) chunkSize = MAX_BUFFER_SIZE;
-            else chunkSize = receivedData.size() - pos;
-            std::string chunk = receivedData.substr(pos, chunkSize);
-            
-            saveDataToCache(targetUrl, chunk, partNumber);
-            
-            pos += chunkSize;
-            ++partNumber;
-        }
-        receivedData.clear();
-        memset(buffer, 0, sizeof(buffer));
-    }
-    count += receivedData.size();
-    if (!receivedData.empty()) {
-        saveDataToCache(targetUrl, receivedData, partNumber);
-    }
-
-    close(targetSocket);
-    close(clientSocket);
-    while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
-        receivedData.append(buffer, bytesRead);
-        count += receivedData.size();
-
-        if (receivedData.size() >= MAX_BUFFER_SIZE) {
-            size_t dataSizeForCurrentPart = MAX_BUFFER_SIZE;
-            if (receivedData.size() > MAX_BUFFER_SIZE) {
-                dataSizeForCurrentPart = receivedData.size() - MAX_BUFFER_SIZE;
+            size_t pos = 0;
+            while (pos < receivedData.size()) {
+                size_t chunkSize;
+                if (MAX_BUFFER_SIZE < receivedData.size() - pos) chunkSize = MAX_BUFFER_SIZE;
+                else chunkSize = receivedData.size() - pos;
+                std::string chunk = receivedData.substr(pos, chunkSize);
+                
+                saveDataToCache(targetUrl, chunk, partNumber);
+                
+                pos += chunkSize;
+                ++partNumber;
             }
-
-            saveDataToCache(targetUrl, receivedData.substr(0, MAX_BUFFER_SIZE), partNumber);
-
-            write(clientSocket, receivedData.substr(0, MAX_BUFFER_SIZE).c_str(), MAX_BUFFER_SIZE);
-            
-            receivedData = receivedData.substr(MAX_BUFFER_SIZE);
-
-            ++partNumber;
+            receivedData.clear();
+            memset(buffer, 0, sizeof(buffer));
         }
-        
-        memset(buffer, 0, sizeof(buffer));
+
+        if (!receivedData.empty()) {
+            saveDataToCache(targetUrl, receivedData, partNumber);
+            write(clientSocket, receivedData.c_str(), receivedData.length());
+        }
+        count += receivedData.size();
     }
 
-    if (!receivedData.empty()) {
-        saveDataToCache(targetUrl, receivedData, partNumber);
-        write(clientSocket, receivedData.c_str(), receivedData.length());
-    }
-
-    close(targetSocket);
-    close(clientSocket);
     std::cout << count << std::endl;
 
     close(targetSocket);
     close(clientSocket);
     return nullptr;
 }
+
+
 
 int main() {
     signal(SIGINT, signalHandler);
