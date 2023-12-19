@@ -162,13 +162,29 @@ void* handleClientRequest(void* args) {
 
     write(targetSocket, request.c_str(), request.length());
 
+    char responseBuffer[MAX_BUFFER_SIZE];
+    ssize_t responseBytesRead = read(targetSocket, responseBuffer, sizeof(responseBuffer));
+    bool isOk = false;
+    if (responseBytesRead > 0) {
+        std::string response(responseBuffer, responseBytesRead);
+        
+        // Проверка кода ответа (например, 200 для успешного запроса)
+        if (response.find("200 OK") == std::string::npos) {
+            std::cout << "Request error" << std::endl;
+            write(clientSocket, buffer, bytesRead);
+            close(targetSocket);
+            close(clientSocket);
+            return nullptr;
+        }
+    }
+
     int count = 0;
     std::string receivedData;
     int partNumber = 1;
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
-        std::cout << "...................................................." << std::endl;
-        std::cout << isDataInCache(targetUrl) << std::endl;
+        std::cout << "Writing to cache" << std::endl;
+        bool isData = isDataInCache(targetUrl);
 
         while ((bytesRead = read(targetSocket, buffer, sizeof(buffer))) > 0) {
             receivedData.append(buffer, bytesRead);
@@ -182,7 +198,7 @@ void* handleClientRequest(void* args) {
                 else chunkSize = receivedData.size() - pos;
                 std::string chunk = receivedData.substr(pos, chunkSize);
                 
-                saveDataToCache(targetUrl, chunk, partNumber);
+                if (!isData) saveDataToCache(targetUrl, chunk, partNumber);
                 
                 pos += chunkSize;
                 ++partNumber;
