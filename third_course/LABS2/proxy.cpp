@@ -13,8 +13,6 @@
 #include <condition_variable>
 
 std::mutex cacheMutex;
-std::condition_variable cacheReady;
-bool dataReady = true;
 
 #define MAX_BUFFER_SIZE 4096
 #define PORT 8085
@@ -68,7 +66,11 @@ void signalHandler(int signal) {
 }
 
 bool isDataInCache(const std::string& url) {
-    return cache.find(url + "_1") != cache.end();
+    auto it = cache.find(url);
+    if (it != cache.end() && it->second == "success") {
+        return true;
+    }
+    return false;
 }
 
 void saveDataToCache(const std::string& url, const std::string& data, int partNumber) {
@@ -90,12 +92,6 @@ void* handleClientRequest(void* args) {
 
     int count1 = 0;
     int count2 = 0;
-
-    // Проверяем флаг для разрешения чтения из кэша
-    {
-        std::unique_lock<std::mutex> lock(cacheMutex);
-        cacheReady.wait(lock, [] { return dataReady; });
-    }
 
 
     // Если разрешено читать из кэша, то читаем
@@ -122,8 +118,6 @@ void* handleClientRequest(void* args) {
         close(clientSocket);
         return nullptr;
     }
-
-    dataReady = false;
 
     struct addrinfo hints{};
     struct addrinfo* result;
@@ -209,9 +203,8 @@ void* handleClientRequest(void* args) {
             write(clientSocket, receivedData.c_str(), receivedData.length());
         }
         count += receivedData.size();
-        dataReady = true;
+        cache[targetUrl] = "success";
     }
-    cacheReady.notify_all();
 
     std::cout << count << std::endl;
 
