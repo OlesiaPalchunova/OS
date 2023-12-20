@@ -14,7 +14,7 @@
 
 std::mutex cacheMutex;
 std::condition_variable cacheReady;
-bool dataReady = false;
+bool dataReady = true;
 
 #define MAX_BUFFER_SIZE 4096
 #define PORT 8085
@@ -96,11 +96,8 @@ void* handleClientRequest(void* args) {
     // Проверяем флаг для разрешения чтения из кэша
     {
         std::unique_lock<std::mutex> lock(cacheMutex);
-        if (dataReady) {
-            allowCacheRead = true;
-        } else {
-            dataReady = true;
-        }
+        cacheReady.wait(lock, [] { return dataReady; });
+        allowCacheRead = true;
     }
 
     // Если разрешено читать из кэша, то читаем
@@ -212,7 +209,9 @@ void* handleClientRequest(void* args) {
             write(clientSocket, receivedData.c_str(), receivedData.length());
         }
         count += receivedData.size();
+        dataReady = true;
     }
+    cacheReady.notify_all();
 
     std::cout << count << std::endl;
 
