@@ -91,17 +91,15 @@ void* handleClientRequest(void* args) {
     int count1 = 0;
     int count2 = 0;
 
-    bool allowCacheRead = false;
-
     // Проверяем флаг для разрешения чтения из кэша
     {
         std::unique_lock<std::mutex> lock(cacheMutex);
         cacheReady.wait(lock, [] { return dataReady; });
-        allowCacheRead = true;
     }
 
+
     // Если разрешено читать из кэша, то читаем
-    if (allowCacheRead && isDataInCache(targetUrl)) {
+    if (isDataInCache(targetUrl)) {
         std::cout << "Data found in cache." << std::endl;
 
         for (int partNumber = 1;; ++partNumber) {
@@ -124,6 +122,8 @@ void* handleClientRequest(void* args) {
         close(clientSocket);
         return nullptr;
     }
+
+    dataReady = false;
 
     struct addrinfo hints{};
     struct addrinfo* result;
